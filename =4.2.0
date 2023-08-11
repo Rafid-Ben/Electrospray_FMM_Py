@@ -1,0 +1,12 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting nbformat
+  Downloading nbformat-5.9.2-py3-none-any.whl (77 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 77.6/77.6 kB 1.8 MB/s eta 0:00:00
+Collecting fastjsonschema (from nbformat)
+  Downloading fastjsonschema-2.18.0-py3-none-any.whl (23 kB)
+Requirement already satisfied: jsonschema>=2.6 in /usr/lib/python3/dist-packages (from nbformat) (3.2.0)
+Requirement already satisfied: jupyter-core in /home/arb399/.local/lib/python3.10/site-packages (from nbformat) (5.3.1)
+Requirement already satisfied: traitlets>=5.1 in /home/arb399/.local/lib/python3.10/site-packages (from nbformat) (5.9.0)
+Requirement already satisfied: platformdirs>=2.5 in /home/arb399/.local/lib/python3.10/site-packages (from jupyter-core->nbformat) (3.5.3)
+Installing collected packages: fastjsonschema, nbformat
+Successfully installed fastjsonschema-2.18.0 nbformat-5.9.2
