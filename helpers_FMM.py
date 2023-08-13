@@ -114,7 +114,7 @@ def IC_conditions (n,prob,ri,zi,vri,vzi,Pneut,Pmono,Pdim,Ptrim):
 def triangulation (r,z,Er,Ez):
     points = np.column_stack((r, z))
     tri = Delaunay(points)
-    E_array= np.vstack((Er.flatten(), Ez.flatten())).T
+    E_array= np.vstack((Er.ravel(), Ez.ravel())).T
     interp=LinearNDInterpolator(tri, E_array, fill_value=np.nan, rescale=False)
     return interp
 
@@ -124,7 +124,10 @@ def interp_lin_delaunay(interp,request_pts):
 
 
 
-def compute_acc_laplace (interp,x,y,z,mass,charge):
+def compute_acc_laplace (interp,pos,mass,charge):
+    x = pos[:,0].copy()
+    y = pos[:,1].copy()
+    z = pos[:,2].copy()
     r = np.sqrt(x**2 + y**2) # convert cartesian to cylindrical
     request_pts=np.vstack((r,z)).T
     E_array=interp_lin_delaunay(interp,request_pts) # nx2 array of Er and Ez
@@ -142,34 +145,68 @@ def compute_acc_laplace (interp,x,y,z,mass,charge):
 
 
 
-def leapfrog_kdk(pos,vel,acc,dt,mass,charge,P,nbpl,interp):
-    """Takes the current position, velocity, and acceleration at time t. Then, it carries out
- the leapfrog scheme kick-drift-kick. It then returns the updated position, velocity and accelration
- at time t+dt.
-     Args:
-        pos (np.array of Nx3): _Position x, y, and z of N particles_
-        vel (np.array of Nx3): _Velocity vx, vy, and vz of N particles_
-        acc (np.array of Nx3): _Acceleration ax, ay, and az of N particles_
-        dt (float): _Timestep_
-        mass (np.array of N): _Mass of N particles_
-        charge (np.array of N): _Charge of N particles_
-        P: order of expansion of the FMM
-        nbpl: max number of bodies per leaf
-    Returns:
-        pos (np.array of Nx3): _New position x, y, and z of N particles_
-        vel (np.array of Nx3): _New velocity vx, vy, and vz of N particles_
-        acc (np.array of Nx3): _New acceleration ax, ay, and az of N particles_
+
+
+
+def leapfrog_kdk(pos, vel, acc, dt, mass, charge, P, nbpl, interp, current_step):
     """
-    # (1/2) kick 
-    vel += acc * dt/2.0
-    # drift
+    Modified leapfrog scheme for particle motion based on z position.
+    
+    Args:
+        pos (np.array of Nx3): Position x, y, and z of N particles.
+        vel (np.array of Nx3): Velocity vx, vy, and vz of N particles.
+        acc (np.array of Nx3): Acceleration ax, ay, and az of N particles.
+        dt (float): Timestep.
+        mass (np.array of N): Mass of N particles.
+        k (float, optional): Coulomb constant.
+        softening (float): Softening length.
+        interp: Interpolation function (not detailed in given code).
+        current_step (int): Current timestep.
+
+    Returns:
+        pos (np.array of Nx3): New position x, y, and z of N particles.
+        vel (np.array of Nx3): New velocity vx, vy, and vz of N particles.
+        acc (np.array of Nx3): New acceleration ax, ay, and az of N particles.
+    """
+    
+    # Mask for particles with z <= 5e-6
+    mask1 = pos[:,2] <= 5e-6
+    # Mask for particles with 5e-6 < z <= 250e-6
+    mask2 = (pos[:,2] > 5e-6) & (pos[:,2] <= 250e-6)
+    # Mask for particles with z > 250e-6
+    mask3 = pos[:,2] > 250e-6
+    
+    # Mask for region 1 and 2
+    mask12=mask1 | mask2
+    
+    
+    # (1/2) kick for particles with z <= 5e-6 or 5e-6 < z <= 250e-6
+    vel[mask12] += acc[mask12] * dt/2.0
+    
+    # Drift for all particles
     pos += vel * dt
-    # update accelerations
-    acc_poisson = FMM_acc_poisson(pos, mass, charge,P,nbpl)
-    acc_laplace= compute_acc_laplace (interp,pos[:,0],pos[:,1],pos[:,2],mass,charge)
-    acc=acc_poisson+acc_laplace
-    vel += acc * dt/2.0
- 
+    
+    # Update accelerations for particles with z <= 5e-6
+    acc_poisson1 = FMM_acc_poisson(pos[mask1], mass[mask1], charge[mask1],P,nbpl)
+    acc_laplace1 = compute_acc_laplace(interp, pos[mask1], mass[mask1], charge[mask1])
+    acc[mask1] = acc_poisson1 + acc_laplace1
+    
+    # Update accelerations for particles with 5e-6 < z <= 250e-6
+    if np.any(mask2):
+        if current_step % 10 == 0:
+            acc_poisson2 = FMM_acc_poisson(pos[mask2], mass[mask2], charge[mask2], P,nbpl)
+        else:
+            acc_poisson2 = np.zeros_like(pos[mask2])
+    
+        acc_laplace2 = compute_acc_laplace(interp, pos[mask2], mass[mask2], charge[mask2])
+        acc[mask2] = acc_poisson2 + acc_laplace2
+    
+    # Acceleration is null for particles with z > 250e-6
+    acc[mask3] = 0.0
+    
+    # (1/2) kick for particles with z <= 5e-6 or 5e-6 < z <= 250e-6
+    vel[mask12] += acc[mask12] * dt/2.0
+
     return pos, vel, acc
 
 
@@ -209,13 +246,14 @@ def FMM_nbody(dt,N,prob,ri,zi,vri,vzi,Pneut,Pmono,Pdim,Ptrim,P,nbpl,interp):
     #vel_save[0,:,0] = vel[0:1]
 
     # Simulation Main Loop
-     
+    current_step=0
     for i in range(1,N):
         # Run the leapfrog scheme:
-        pos[0:i],vel[0:i],acc[0:i]=leapfrog_kdk(pos[0:i],vel[0:i],acc[0:i],dt,mass[0:i].flatten(),charge[0:i].flatten(), P, nbpl,interp)
+        pos[0:i],vel[0:i],acc[0:i]=leapfrog_kdk(pos[0:i],vel[0:i],acc[0:i],dt,mass[0:i].ravel(),charge[0:i].ravel(), P, nbpl,interp,current_step)
         # save the current position and velocity of the 0 to i particles:
         pos_save[:i,:,i] = pos[0:i]
         #vel_save[:i,:,i] = vel[0:i]
+        current_step += 1
         
     return species, pos_save , IC_copy
 
